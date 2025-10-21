@@ -56,6 +56,26 @@ export function FilterPanel({
 
   const hasActiveFilters = searchTerm.length > 0 || selectedCategories.length > 0;
 
+  // Memoize category button styles to prevent unnecessary re-renders
+  const categoryButtons = useMemo(() => {
+    return categories.map((category) => {
+      const isSelected = selectedCategories.includes(category.id);
+      const style = isSelected
+        ? {
+            backgroundColor: category.color || getCategoryColor(category.name),
+            borderColor: category.color || getCategoryColor(category.name),
+          }
+        : undefined;
+      
+      return {
+        id: category.id,
+        name: category.name,
+        isSelected,
+        style,
+      };
+    });
+  }, [categories, selectedCategories]);
+
   return (
     <Card className={`p-4 space-y-4 ${className}`}>
       <div className="flex items-center gap-2 mb-4">
@@ -100,32 +120,22 @@ export function FilterPanel({
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {categories.map((category) => {
-              const isSelected = selectedCategories.includes(category.id);
-              return (
-                <Button
-                  key={category.id}
-                  variant={isSelected ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => onCategoryToggle(category.id)}
-                  className={`text-ui-label ${
-                    isSelected
-                      ? "text-white"
-                      : "hover:bg-muted"
-                  }`}
-                  style={
-                    isSelected
-                      ? {
-                          backgroundColor: category.color || getCategoryColor(category.name),
-                          borderColor: category.color || getCategoryColor(category.name),
-                        }
-                      : undefined
-                  }
-                >
-                  {category.name}
-                </Button>
-              );
-            })}
+            {categoryButtons.map((button) => (
+              <Button
+                key={button.id}
+                variant={button.isSelected ? "default" : "outline"}
+                size="sm"
+                onClick={() => onCategoryToggle(button.id)}
+                className={`text-ui-label ${
+                  button.isSelected
+                    ? "text-white"
+                    : "hover:bg-muted"
+                }`}
+                style={button.style}
+              >
+                {button.name}
+              </Button>
+            ))}
           </div>
         )}
       </div>

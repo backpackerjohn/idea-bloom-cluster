@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -49,6 +49,20 @@ export function ThoughtCard({
   const lines = thought.content.split('\n').filter(line => line.trim());
   const title = lines[0] || thought.content.substring(0, 50);
   const snippet = lines.slice(1, 3).join(' ') || (lines.length === 1 ? '' : thought.content.substring(50, 150));
+
+  // Memoize category badge styles to prevent unnecessary re-renders
+  const categoryBadgeStyles = useMemo(() => {
+    return thought.thought_categories.map((tc) => {
+      if (!tc.categories) return null;
+      return {
+        id: tc.categories.id,
+        name: tc.categories.name,
+        style: {
+          backgroundColor: tc.categories.color || getCategoryColor(tc.categories.name)
+        }
+      };
+    }).filter(Boolean);
+  }, [thought.thought_categories]);
 
   async function handleSave() {
     if (!editContent.trim()) {
@@ -241,14 +255,14 @@ export function ThoughtCard({
               </span>
             )}
             {!isCategorizing && thought.thought_categories && thought.thought_categories.length > 0 ? (
-              thought.thought_categories.map((tc, idx) => 
-                tc.categories ? (
+              categoryBadgeStyles.map((badge, idx) => 
+                badge ? (
                   <span
-                    key={idx}
+                    key={badge.id}
                     className="px-2 py-1 rounded-full text-ui-label text-white"
-                    style={{ backgroundColor: tc.categories.color || getCategoryColor(tc.categories.name) }}
+                    style={badge.style}
                   >
-                    {tc.categories.name}
+                    {badge.name}
                   </span>
                 ) : null
               )
