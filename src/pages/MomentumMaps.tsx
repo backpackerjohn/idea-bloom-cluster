@@ -105,7 +105,7 @@ export default function MomentumMaps() {
           title: chunk.title,
           energy_tag: chunk.energy_tag || 'medium',
           sort_order: chunk.sort_order
-        })
+        } as any)
         .select()
         .single();
 
