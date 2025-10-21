@@ -51,7 +51,7 @@ export function useClusterData() {
     return () => {
       supabase.removeChannel(clustersChannel);
     };
-  }, []);
+  }, []); // fetchClusters is stable and doesn't need to be in deps
 
   async function fetchClusters() {
     try {

@@ -41,7 +41,7 @@ export function useBrainDumpData(status: ThoughtStatus = 'active') {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [status]);
+  }, [status]); // fetchThoughts is stable and doesn't need to be in deps
 
   async function fetchThoughts() {
     try {
