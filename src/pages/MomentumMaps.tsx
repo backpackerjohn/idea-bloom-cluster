@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { GoalInput } from "@/components/momentum-maps/GoalInput";
@@ -14,21 +14,22 @@ import { RefreshCw, PlusCircle, ArrowLeft } from "lucide-react";
 import { useMomentumMaps, Chunk } from "@/hooks/useMomentumMaps";
 import { useMapGeneration } from "@/hooks/useMapGeneration";
 import { useChunkOperations } from "@/hooks/useChunkOperations";
+import { momentumMapsReducer, initialMomentumMapsState } from "@/reducers/momentumMapsReducer";
 
+/**
+ * MomentumMaps - AI-powered task breakdown and progress tracking
+ * 
+ * This component uses the reducer pattern for state management (similar to BrainDump).
+ * State is managed via momentumMapsReducer for better organization and testability.
+ */
 export default function MomentumMaps() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [state, dispatch] = useReducer(momentumMapsReducer, initialMomentumMapsState);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const { maps, isLoading: mapsLoading } = useMomentumMaps();
   const { generateMap, replanMap, getStuckSuggestions, isGenerating, error, setError } = useMapGeneration();
   const { toggleSubStep, toggleLockChunk, updateAcceptanceCriteria } = useChunkOperations();
-
-  const [stuckModalOpen, setStuckModalOpen] = useState(false);
-  const [stuckChunk, setStuckChunk] = useState<Chunk | null>(null);
-  const [replanModalOpen, setReplanModalOpen] = useState(false);
-  const [newPlan, setNewPlan] = useState<any>(null);
-  const [isAcceptingReplan, setIsAcceptingReplan] = useState(false);
 
   const mapId = searchParams.get('map');
   const currentMap = maps.find(m => m.id === mapId);
@@ -39,7 +40,7 @@ export default function MomentumMaps() {
       if (!session) {
         navigate("/auth");
       } else {
-        setIsAuthenticated(true);
+        dispatch({ type: 'SET_AUTHENTICATED', isAuthenticated: true });
       }
     });
   }, [navigate]);
@@ -67,85 +68,91 @@ export default function MomentumMaps() {
 
     const plan = await replanMap(currentMap.id, currentMap.goal, lockedChunks);
     if (plan) {
-      setNewPlan(plan);
-      setReplanModalOpen(true);
+      dispatch({ type: 'OPEN_REPLAN_MODAL', plan });
+    }
+  };
+
+  /**
+   * Applies a replan by replacing all chunks with new ones from the AI-generated plan.
+   * This is a complex operation involving multiple DB writes that must succeed together.
+   */
+  const applyReplanToDatabase = async (mapId: string, plan: any) => {
+    // Step 1: Delete old chunks (cascades to sub_steps via DB constraints)
+    const { error: deleteError } = await supabase
+      .from('chunks')
+      .delete()
+      .eq('momentum_map_id', mapId);
+
+    if (deleteError) throw deleteError;
+
+    // Step 2: Update map metadata (acceptance criteria and unlock chunks)
+    const { error: updateError } = await supabase
+      .from('momentum_maps')
+      .update({ 
+        acceptance_criteria: plan.acceptance_criteria || [],
+        locked_chunks: []
+      })
+      .eq('id', mapId);
+
+    if (updateError) throw updateError;
+
+    // Step 3: Create new chunks with their sub-steps
+    for (const chunk of plan.chunks) {
+      const { data: chunkData, error: chunkError } = await supabase
+        .from('chunks')
+        .insert({
+          momentum_map_id: mapId,
+          title: chunk.title,
+          energy_tag: chunk.energy_tag || 'medium',
+          sort_order: chunk.sort_order
+        })
+        .select()
+        .single();
+
+      if (chunkError) throw chunkError;
+
+      // Add sub-steps for this chunk if they exist
+      if (chunk.sub_steps && chunk.sub_steps.length > 0) {
+        const subStepsToInsert = chunk.sub_steps.map((step: any) => ({
+          chunk_id: chunkData.id,
+          title: step.title,
+          time_estimate: step.time_estimate || '30 mins',
+          sort_order: step.sort_order
+        }));
+
+        const { error: subStepsError } = await supabase
+          .from('sub_steps')
+          .insert(subStepsToInsert);
+
+        if (subStepsError) throw subStepsError;
+      }
     }
   };
 
   const handleAcceptReplan = async () => {
-    if (!currentMap || !newPlan) return;
+    if (!currentMap || !state.newPlan) return;
 
-    setIsAcceptingReplan(true);
+    dispatch({ type: 'SET_ACCEPTING_REPLAN', isAccepting: true });
     try {
-      // Delete old chunks
-      const { error: deleteError } = await supabase
-        .from('chunks')
-        .delete()
-        .eq('momentum_map_id', currentMap.id);
-
-      if (deleteError) throw deleteError;
-
-      // Update acceptance criteria
-      const { error: updateError } = await supabase
-        .from('momentum_maps')
-        .update({ 
-          acceptance_criteria: newPlan.acceptance_criteria || [],
-          locked_chunks: []
-        })
-        .eq('id', currentMap.id);
-
-      if (updateError) throw updateError;
-
-      // Create new chunks
-      for (const chunk of newPlan.chunks) {
-        const { data: chunkData, error: chunkError } = await supabase
-          .from('chunks')
-          .insert({
-            momentum_map_id: currentMap.id,
-            title: chunk.title,
-            energy_tag: chunk.energy_tag || 'medium',
-            sort_order: chunk.sort_order
-          })
-          .select()
-          .single();
-
-        if (chunkError) throw chunkError;
-
-        if (chunk.sub_steps && chunk.sub_steps.length > 0) {
-          const subStepsToInsert = chunk.sub_steps.map((step: any) => ({
-            chunk_id: chunkData.id,
-            title: step.title,
-            time_estimate: step.time_estimate || '30 mins',
-            sort_order: step.sort_order
-          }));
-
-          const { error: subStepsError } = await supabase
-            .from('sub_steps')
-            .insert(subStepsToInsert);
-
-          if (subStepsError) throw subStepsError;
-        }
-      }
-
-      setReplanModalOpen(false);
-      setNewPlan(null);
+      await applyReplanToDatabase(currentMap.id, state.newPlan);
+      dispatch({ type: 'CLOSE_REPLAN_MODAL' });
     } catch (error) {
       console.error('Error accepting replan:', error);
+      // Modal stays open so user can retry
     } finally {
-      setIsAcceptingReplan(false);
+      dispatch({ type: 'SET_ACCEPTING_REPLAN', isAccepting: false });
     }
   };
 
   const handleGetHelp = (chunk: Chunk) => {
-    setStuckChunk(chunk);
-    setStuckModalOpen(true);
+    dispatch({ type: 'OPEN_STUCK_MODAL', chunk });
   };
 
   const handleBackToInput = () => {
     setSearchParams({});
   };
 
-  if (!isAuthenticated) return null;
+  if (!state.isAuthenticated) return null;
 
   if (showInput) {
     return (
@@ -293,19 +300,19 @@ export default function MomentumMaps() {
 
       {/* Modals */}
       <ImStuckModal
-        isOpen={stuckModalOpen}
-        onClose={() => setStuckModalOpen(false)}
-        chunk={stuckChunk}
+        isOpen={state.stuckModalOpen}
+        onClose={() => dispatch({ type: 'CLOSE_STUCK_MODAL' })}
+        chunk={state.stuckChunk}
         getSuggestions={getStuckSuggestions}
         goal={currentMap.goal}
       />
 
       <ReplanDiffModal
-        isOpen={replanModalOpen}
-        onClose={() => setReplanModalOpen(false)}
-        newPlan={newPlan}
+        isOpen={state.replanModalOpen}
+        onClose={() => dispatch({ type: 'CLOSE_REPLAN_MODAL' })}
+        newPlan={state.newPlan}
         onAccept={handleAcceptReplan}
-        isAccepting={isAcceptingReplan}
+        isAccepting={state.isAcceptingReplan}
       />
     </>
   );
