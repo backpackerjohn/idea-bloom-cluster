@@ -80,8 +80,7 @@ export function CapturePanel({ onRefetch, onCategorizingUpdate }: CapturePanelPr
           try {
             const { data, error } = await supabase.functions.invoke('categorize-thought', {
               body: { 
-                thoughtContent: thought.content,
-                userId: user.id 
+                thoughtContent: thought.content
               }
             });
 

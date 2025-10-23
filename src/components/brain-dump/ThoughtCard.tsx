@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { getCategoryColor } from "@/lib/categoryColors";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database } from "@/integrations/supabase/types.generated";
 
 type Thought = Database['public']['Tables']['thoughts']['Row'];
 type Category = Database['public']['Tables']['categories']['Row'];
@@ -17,12 +17,18 @@ interface ThoughtCategory {
   categories: Pick<Category, 'id' | 'name' | 'color'> | null;
 }
 
-interface ThoughtWithCategories extends Thought {
+interface ThoughtClusterInfo {
+  is_completed: boolean;
+  clusters: { id: string; name: string } | null;
+}
+
+interface ThoughtWithJoins extends Thought {
   thought_categories: ThoughtCategory[];
+  cluster_thoughts: ThoughtClusterInfo[];
 }
 
 interface ThoughtCardProps {
-  thought: ThoughtWithCategories;
+  thought: ThoughtWithJoins;
   onArchive?: (id: string) => void;
   onDelete?: (id: string) => void;
   isCategorizing?: boolean;
@@ -64,6 +70,14 @@ export function ThoughtCard({
     }).filter(Boolean);
   }, [thought.thought_categories]);
 
+  // Determine ghost card state when completed within any cluster
+  const completedClusterName = useMemo(() => {
+    if (!thought.cluster_thoughts || thought.cluster_thoughts.length === 0) return null;
+    const completed = thought.cluster_thoughts.find(ct => ct.is_completed && ct.clusters);
+    return completed?.clusters?.name || null;
+  }, [thought.cluster_thoughts]);
+  const isGhostCard = !!completedClusterName;
+
   async function handleSave() {
     if (!editContent.trim()) {
       toast({ title: "Content cannot be empty", variant: "destructive" });
@@ -89,14 +103,13 @@ export function ThoughtCard({
     setIsLoading(true);
     const { error } = await supabase
       .from('thoughts')
-      .update({ status: 'archived', archived_at: new Date().toISOString() })
+      .update({ status: 'archived' })
       .eq('id', thought.id);
 
     if (error) {
       toast({ title: "Failed to archive thought", variant: "destructive" });
     } else {
       // Store original state for undo
-      const originalThought = { ...thought };
       
       // Show undo toast
       toast({
@@ -109,7 +122,7 @@ export function ThoughtCard({
               // Restore thought
               await supabase
                 .from('thoughts')
-                .update({ status: 'active', archived_at: null })
+                .update({ status: 'active' })
                 .eq('id', thought.id);
               
               toast({ title: "Thought restored" });
@@ -153,8 +166,7 @@ export function ThoughtCard({
 
       const { data, error } = await supabase.functions.invoke('categorize-thought', {
         body: { 
-          thoughtContent: thought.content,
-          userId: user.id 
+          thoughtContent: thought.content
         }
       });
 
@@ -194,9 +206,24 @@ export function ThoughtCard({
   }
 
   return (
-    <Card className={`group relative p-4 hover:scale-[1.02] hover:shadow-xl transition-all duration-200 ${
+    <Card 
+      className={`group relative p-4 hover:scale-[1.02] hover:shadow-xl transition-all duration-200 ${
       isSelected ? 'ring-2 ring-primary bg-primary/5' : ''
-    }`}>
+    } ${isGhostCard ? 'opacity-40 blur-[1px] pointer-events-none' : ''}`}
+      draggable={!isGhostCard}
+      onDragStart={(e) => {
+        if (isGhostCard) return;
+        e.dataTransfer.setData('text/thought-id', thought.id);
+        e.dataTransfer.setData('text/plain', thought.id);
+      }}
+    >
+      {isGhostCard && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+          <span className="text-sm text-muted-foreground">
+            Completed in {completedClusterName}
+          </span>
+        </div>
+      )}
       {/* Selection Checkbox */}
       {isSelectionMode && (
         <div className="absolute top-2 left-2 z-10">

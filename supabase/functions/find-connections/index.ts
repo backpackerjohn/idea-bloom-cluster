@@ -13,10 +13,31 @@ serve(async (req) => {
   }
 
   try {
-    const { userId } = await req.json();
-    
-    if (!userId) {
-      throw new Error("Missing required field: userId");
+    const authSupabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!authSupabaseUrl || !supabaseAnonKey) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Server misconfiguration',
+          connections: [] 
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const authClient = createClient(authSupabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: req.headers.get('Authorization') || '' } },
+    });
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Not authenticated',
+          connections: [] 
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -24,7 +45,7 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
-    console.log('Finding connections for user:', userId);
+    console.log('Finding connections for user:', user.id);
 
     // Get user's thoughts from database
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -34,7 +55,7 @@ serve(async (req) => {
     const { data: thoughts, error: thoughtsError } = await supabase
       .from('thoughts')
       .select('id, content')
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .eq('status', 'active')
       .order('created_at', { ascending: false })
       .limit(100); // Limit to recent 100 thoughts for performance
@@ -155,7 +176,7 @@ Return ONLY a JSON array in this exact format:
     const connectionsToInsert = validConnections
       .filter((conn): conn is NonNullable<typeof conn> => conn !== null)
       .map(conn => ({
-        user_id: userId,
+        user_id: user.id,
         thought1_id: conn.thought1_id,
         thought2_id: conn.thought2_id,
         strength: conn.strength,

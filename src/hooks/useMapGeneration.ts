@@ -1,13 +1,11 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { MomentumMap } from "./useMomentumMaps";
 
 export function useMapGeneration() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
 
   const generateMap = async (goal: string): Promise<MomentumMap | null> => {
     if (!goal || goal.trim().length === 0) {

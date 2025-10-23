@@ -13,10 +13,44 @@ serve(async (req) => {
   }
 
   try {
-    const { thoughtContent, userId } = await req.json();
+    const { thoughtContent } = await req.json();
     
-    if (!thoughtContent || !userId) {
-      throw new Error("Missing required fields: thoughtContent, userId");
+    if (!thoughtContent) {
+      throw new Error("Missing required fields: thoughtContent");
+    }
+
+    const authSupabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!authSupabaseUrl || !supabaseAnonKey) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Server misconfiguration',
+          categories: [] 
+        }),
+        { 
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+    const authClient = createClient(authSupabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: req.headers.get('Authorization') || '' } },
+    });
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Not authenticated',
+          categories: [] 
+        }),
+        { 
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -24,7 +58,7 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
-    console.log('Categorizing thought for user:', userId);
+    console.log('Categorizing thought for user:', user.id);
 
     // Call Lovable AI Gateway with Gemini 2.0 Flash Lite
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -103,7 +137,7 @@ Example: ["Work", "Tasks"]`
       const { data: existingCategory } = await supabase
         .from('categories')
         .select('id')
-        .eq('user_id', userId)
+        .eq('user_id', user.id)
         .eq('name', categoryName)
         .single();
 
@@ -114,7 +148,7 @@ Example: ["Work", "Tasks"]`
         const { data: newCategory, error: createError } = await supabase
           .from('categories')
           .insert({
-            user_id: userId,
+            user_id: user.id,
             name: categoryName,
           })
           .select('id')

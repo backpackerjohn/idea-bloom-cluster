@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { Outlet, useNavigate, NavLink } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { User, Session } from "@supabase/supabase-js";
-import { Brain, Map, Bell, Home, LogOut, Menu, X, Plus } from "lucide-react";
+import { User } from "@supabase/supabase-js";
+import { Brain, Map, Bell, Home, LogOut, Menu, X, Plus, Settings as SettingsIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { QuickCaptureModal } from "@/components/QuickCaptureModal";
+import * as Sentry from "@sentry/react";
 
 export default function AppShell() {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const navigate = useNavigate();
@@ -18,14 +18,22 @@ export default function AppShell() {
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        setSession(session);
         setUser(session?.user ?? null);
+        if (session?.user) {
+          Sentry.setUser({ id: session.user.id, email: session.user.email ?? undefined });
+        } else {
+          Sentry.setUser(null);
+        }
       }
     );
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
       setUser(session?.user ?? null);
+      if (session?.user) {
+        Sentry.setUser({ id: session.user.id, email: session.user.email ?? undefined });
+      } else {
+        Sentry.setUser(null);
+      }
 
       if (!session) {
         navigate("/auth");
@@ -35,11 +43,54 @@ export default function AppShell() {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  // Idle session timeout and non-persistent sessions handling
+  useEffect(() => {
+    const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+    let last = Date.now();
+    const update = () => { last = Date.now(); };
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"] as const;
+    events.forEach((ev) => window.addEventListener(ev, update));
+
+    const interval = setInterval(async () => {
+      if (Date.now() - last > IDLE_TIMEOUT_MS) {
+        await supabase.auth.signOut();
+        toast({ title: "Session timed out" });
+        Sentry.setUser(null);
+        navigate("/auth");
+      }
+    }, 60_000);
+
+    // If user opted out of remember me, clear Supabase tokens on tab close
+    const rememberFlag = (() => {
+      try { return localStorage.getItem("remember_me"); } catch { return null; }
+    })();
+    let onUnload: ((this: Window, ev: BeforeUnloadEvent) => any) | null = null;
+    if (rememberFlag === "false") {
+      onUnload = () => {
+        try {
+          const keys = Object.keys(localStorage);
+          for (const k of keys) {
+            if (k.startsWith("sb-")) localStorage.removeItem(k);
+          }
+        } catch {}
+      };
+      window.addEventListener("beforeunload", onUnload);
+    }
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, update));
+      clearInterval(interval);
+      if (onUnload) window.removeEventListener("beforeunload", onUnload);
+    };
+  }, [navigate, toast]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     toast({
       title: "Signed out successfully",
     });
+    Sentry.setUser(null);
     navigate("/auth");
   };
 
@@ -52,6 +103,7 @@ export default function AppShell() {
     { to: "/", label: "Progress", icon: Home },
     { to: "/brain-dump", label: "Brain Dump", icon: Brain },
     { to: "/smart-reminders", label: "Scheduler", icon: Bell },
+    { to: "/settings", label: "Settings", icon: SettingsIcon },
   ];
 
   return (

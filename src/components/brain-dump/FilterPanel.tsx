@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { X, Search, Filter } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getCategoryColor } from "@/lib/categoryColors";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database } from "@/integrations/supabase/types.generated";
 
 type Category = Database['public']['Tables']['categories']['Row'];
 

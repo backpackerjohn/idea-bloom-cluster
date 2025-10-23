@@ -14,6 +14,7 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -26,9 +27,48 @@ export default function Auth() {
     });
   }, [navigate]);
 
+  const isStrongPassword = (p: string) => {
+    if (p.length < 12) return false;
+    const upper = /[A-Z]/.test(p);
+    const lower = /[a-z]/.test(p);
+    const digit = /\d/.test(p);
+    const special = /[^A-Za-z0-9]/.test(p);
+    let classes = 0;
+    if (upper) classes++;
+    if (lower) classes++;
+    if (digit) classes++;
+    if (special) classes++;
+    return classes >= 3;
+  };
+
+  const handleResendVerification = async () => {
+    if (!email) {
+      toast({ title: "Enter your email", description: "Provide your email to resend verification." });
+      return;
+    }
+    setIsLoading(true);
+    const { error } = await supabase.auth.resend({ type: "signup", email });
+    setIsLoading(false);
+    if (error) {
+      toast({ title: "Resend failed", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Verification sent", description: "Please check your inbox." });
+    }
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+
+    if (!isStrongPassword(password)) {
+      setIsLoading(false);
+      toast({
+        title: "Weak password",
+        description: "Use 12+ chars and at least 3 of: upper, lower, digit, symbol.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     const { error } = await supabase.auth.signUp({
       email,
@@ -75,7 +115,25 @@ export default function Auth() {
         variant: "destructive",
       });
     } else {
+      try { localStorage.setItem("remember_me", rememberMe ? "true" : "false"); } catch {}
       navigate("/");
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      toast({ title: "Enter your email", description: "Provide your email to reset password." });
+      return;
+    }
+    setIsLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setIsLoading(false);
+    if (error) {
+      toast({ title: "Reset failed", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Check your email", description: "We sent a password reset link." });
     }
   };
 
@@ -137,6 +195,19 @@ export default function Auth() {
                     required
                   />
                 </div>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                    />
+                    Remember me
+                  </label>
+                  <button type="button" className="text-sm underline" onClick={handleResetPassword}>
+                    Forgot password?
+                  </button>
+                </div>
                 <Button type="submit" className="w-full" disabled={isLoading}>
                   {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Sign In
@@ -177,10 +248,15 @@ export default function Auth() {
                     required
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Sign Up
-                </Button>
+                <div className="flex gap-2">
+                  <Button type="submit" className="w-full" disabled={isLoading}>
+                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Sign Up
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleResendVerification} disabled={isLoading}>
+                    Resend Verification
+                  </Button>
+                </div>
               </form>
             </TabsContent>
           </Tabs>

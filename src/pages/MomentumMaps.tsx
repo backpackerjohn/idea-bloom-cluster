@@ -313,6 +313,7 @@ export default function MomentumMaps() {
         newPlan={state.newPlan}
         onAccept={handleAcceptReplan}
         isAccepting={state.isAcceptingReplan}
+        currentMap={currentMap}
       />
     </>
   );

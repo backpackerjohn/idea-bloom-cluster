@@ -18,11 +18,19 @@ import { ToastAction } from "@/components/ui/toast";
 import { useThoughtFilter } from "@/hooks/useThoughtFilter";
 import { useClusterData } from "@/hooks/useClusterData";
 import { brainDumpReducer, initialBrainDumpState } from "@/reducers/brainDumpReducer";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useClusterOperations } from "@/hooks/useClusterOperations";
 
 export default function BrainDump() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [state, dispatch] = useReducer(brainDumpReducer, initialBrainDumpState);
   const navigate = useNavigate();
+  const { createCluster } = useClusterOperations();
+  const [isCreateClusterOpen, setIsCreateClusterOpen] = useState(false);
+  const [newClusterName, setNewClusterName] = useState("");
+  const [newClusterDescription, setNewClusterDescription] = useState("");
   
   const { thoughts: activeThoughts, isLoading: activeLoading, refetch: refetchActive } = useBrainDumpData('active');
   const { thoughts: archivedThoughts, isLoading: archivedLoading, refetch: refetchArchived } = useBrainDumpData('archived');
@@ -38,6 +46,11 @@ export default function BrainDump() {
     handleCategoryToggle,
     handleClearAll,
   } = useThoughtFilter(activeThoughts);
+
+  const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
+  const [availableCategories, setAvailableCategories] = useState<{ id: string; name: string }[]>([]);
+  const [isAssigningCategory, setIsAssigningCategory] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -64,7 +77,7 @@ export default function BrainDump() {
       
       const { error } = await supabase
         .from('thoughts')
-        .update({ status: 'archived', archived_at: new Date().toISOString() })
+        .update({ status: 'archived' })
         .in('id', thoughtIds);
 
       if (error) throw error;
@@ -78,7 +91,7 @@ export default function BrainDump() {
             onClick={async () => {
               await supabase
                 .from('thoughts')
-                .update({ status: 'active', archived_at: null })
+                .update({ status: 'active' })
                 .in('id', thoughtIds);
               
               toast({ title: "Thoughts restored" });
@@ -98,6 +111,43 @@ export default function BrainDump() {
       dispatch({ type: 'SET_PERFORMING_BULK_ACTION', isPerforming: false });
     }
   }, [state.selectedThoughts]);
+
+  useEffect(() => {
+    if (!isCategoryDialogOpen) return;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('categories')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .order('name');
+      if (!error) setAvailableCategories(data || []);
+    })();
+  }, [isCategoryDialogOpen]);
+
+  const handleBulkAssignCategory = useCallback(async () => {
+    if (!selectedCategoryId || state.selectedThoughts.size === 0) return;
+    setIsAssigningCategory(true);
+    try {
+      const rows = Array.from(state.selectedThoughts).map((thoughtId) => ({
+        thought_id: thoughtId,
+        category_id: selectedCategoryId,
+      }));
+      const { error } = await supabase
+        .from('thought_categories')
+        .upsert(rows, { onConflict: 'thought_id,category_id', ignoreDuplicates: true });
+      if (error) throw error;
+      toast({ title: 'Category added to selected thoughts' });
+      setIsCategoryDialogOpen(false);
+      setSelectedCategoryId('');
+    } catch (e) {
+      console.error('Bulk category assign failed:', e);
+      toast({ title: 'Failed to add category', variant: 'destructive' });
+    } finally {
+      setIsAssigningCategory(false);
+    }
+  }, [selectedCategoryId, state.selectedThoughts]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -144,9 +194,7 @@ export default function BrainDump() {
     dispatch({ type: 'RESET_CONNECTIONS' });
 
     try {
-      const { data, error } = await supabase.functions.invoke('find-connections', {
-        body: { userId: user.id }
-      });
+      const { data, error } = await supabase.functions.invoke('find-connections');
 
       if (error) throw error;
 
@@ -181,16 +229,38 @@ export default function BrainDump() {
     dispatch({ type: 'TOGGLE_THOUGHT_SELECTION', thoughtId });
   }, []);
 
+  async function handleCreateCluster() {
+    if (!newClusterName.trim()) return;
+    const created = await createCluster(newClusterName.trim(), newClusterDescription.trim() || undefined);
+    if (created) {
+      setIsCreateClusterOpen(false);
+      setNewClusterName("");
+      setNewClusterDescription("");
+      await refetchClusters();
+      toast({ title: "Cluster created" });
+    }
+  }
+
   if (!isAuthenticated) return null;
 
   return (
     <div className="min-h-screen p-4" role="main" aria-label="Brain Dump Application">
       <div className="max-w-4xl mx-auto space-y-6">
-        <div className="mb-4">
-          <h1 className="text-h1 mb-2">Brain Dump</h1>
-          <p className="text-body text-muted-foreground">
-            Capture your thoughts, let us organize them. Press Ctrl+K to quickly add thoughts.
-          </p>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-h1 mb-2">Brain Dump</h1>
+            <p className="text-body text-muted-foreground">
+              Capture your thoughts, let us organize them. Press Ctrl+K to quickly add thoughts.
+            </p>
+          </div>
+          <Button
+            variant={state.isSelectionMode ? "default" : "outline"}
+            size="sm"
+            onClick={handleToggleSelectionMode}
+            disabled={activeLoading || activeThoughts.length === 0}
+          >
+            {state.isSelectionMode ? "Cancel" : "Select"}
+          </Button>
         </div>
 
         <CapturePanel 
@@ -371,6 +441,38 @@ export default function BrainDump() {
           </TabsContent>
 
           <TabsContent value="clusters" className="mt-6">
+            {/* Clusters Header Controls */}
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-h3">Clusters</h3>
+                <p className="text-caption text-muted-foreground">Group related thoughts into projects</p>
+              </div>
+              <Button onClick={() => setIsCreateClusterOpen(true)} size="sm">New Cluster</Button>
+            </div>
+
+            {/* Create Cluster Dialog */}
+            <Dialog open={isCreateClusterOpen} onOpenChange={setIsCreateClusterOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Cluster</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="cluster-name">Name</Label>
+                    <Input id="cluster-name" value={newClusterName} onChange={(e) => setNewClusterName(e.target.value)} placeholder="e.g. Website Redesign" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cluster-desc">Description (optional)</Label>
+                    <Input id="cluster-desc" value={newClusterDescription} onChange={(e) => setNewClusterDescription(e.target.value)} placeholder="Short description" />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsCreateClusterOpen(false)}>Cancel</Button>
+                  <Button onClick={handleCreateCluster} disabled={!newClusterName.trim()}>Create</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {clustersLoading ? (
               <div className="space-y-4">
                 {Array.from({ length: 3 }).map((_, index) => (
@@ -397,6 +499,7 @@ export default function BrainDump() {
                     key={cluster.id}
                     cluster={cluster}
                     onUpdate={refetchClusters}
+                    availableThoughts={activeThoughts.filter(t => !cluster.cluster_thoughts.some(ct => ct.thought_id === t.id))}
                   />
                 ))}
               </div>
@@ -428,6 +531,68 @@ export default function BrainDump() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {state.isSelectionMode && state.selectedThoughts.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-3xl">
+          <div className="bg-card border rounded-lg shadow-lg p-3 flex flex-col sm:flex-row gap-3 items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              {state.selectedThoughts.size} selected
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkArchive}
+                disabled={state.isPerformingBulkAction}
+              >
+                {state.isPerformingBulkAction ? "Archiving..." : `Archive ${state.selectedThoughts.size} thoughts`}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCategoryDialogOpen(true)}
+              >
+                Add category to {state.selectedThoughts.size}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => dispatch({ type: 'CLEAR_SELECTION' })}
+              >
+                Clear selection
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Dialog open={isCategoryDialogOpen} onOpenChange={setIsCategoryDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add category to selected thoughts</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label htmlFor="bulk-category">Category</Label>
+            <select
+              id="bulk-category"
+              className="border rounded-md p-2 w-full bg-background"
+              value={selectedCategoryId}
+              onChange={(e) => setSelectedCategoryId(e.target.value)}
+            >
+              <option value="">Select a category</option>
+              {availableCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCategoryDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleBulkAssignCategory} disabled={!selectedCategoryId || isAssigningCategory}>
+              {isAssigningCategory ? 'Adding...' : 'Add'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <FloatingActionButton onClick={() => dispatch({ type: 'OPEN_QUICK_CAPTURE' })} />
       <QuickCaptureModal 

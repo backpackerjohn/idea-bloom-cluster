@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import type { Database } from '@/integrations/supabase/types';
+
+import type { Database } from '@/integrations/supabase/types.generated';
 
 type Thought = Database['public']['Tables']['thoughts']['Row'];
 type Category = Database['public']['Tables']['categories']['Row'];
@@ -12,7 +13,7 @@ interface ThoughtWithCategories extends Thought {
   thought_categories: ThoughtCategory[];
 }
 
-export function useThoughtFilter(thoughts: ThoughtWithCategories[]) {
+export function useThoughtFilter<T extends ThoughtWithCategories>(thoughts: T[]) {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -26,7 +27,7 @@ export function useThoughtFilter(thoughts: ThoughtWithCategories[]) {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  const filteredThoughts = useMemo(() => {
+  const filteredThoughts = useMemo((): T[] => {
     let filtered = thoughts;
 
     // Filter by search term
@@ -47,7 +48,7 @@ export function useThoughtFilter(thoughts: ThoughtWithCategories[]) {
       });
     }
 
-    return filtered;
+    return filtered as T[];
   }, [thoughts, debouncedSearchTerm, selectedCategories]);
 
   const handleSearchChange = (term: string) => {

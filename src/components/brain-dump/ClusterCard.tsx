@@ -3,10 +3,10 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "@/hooks/use-toast";
-import type { Database } from "@/integrations/supabase/types";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { useClusterOperations } from "@/hooks/useClusterOperations";
+import type { Database } from "@/integrations/supabase/types.generated";
 
 type Cluster = Database['public']['Tables']['clusters']['Row'];
 type Thought = Database['public']['Tables']['thoughts']['Row'];
@@ -22,11 +22,13 @@ interface ClusterWithThoughts extends Cluster {
 interface ClusterCardProps {
   cluster: ClusterWithThoughts;
   onUpdate?: () => void;
+  availableThoughts?: Thought[];
 }
 
-export function ClusterCard({ cluster, onUpdate }: ClusterCardProps) {
+export function ClusterCard({ cluster, onUpdate, availableThoughts }: ClusterCardProps) {
   const [isExpanded, setIsExpanded] = useState(!cluster.is_collapsed);
   const [isLoading, setIsLoading] = useState(false);
+  const { addThoughtToCluster, toggleThoughtCompletion, toggleClusterCollapse, deleteCluster } = useClusterOperations();
 
   const totalThoughts = cluster.cluster_thoughts.length;
   const completedThoughts = cluster.cluster_thoughts.filter(ct => ct.is_completed).length;
@@ -38,39 +40,46 @@ export function ClusterCard({ cluster, onUpdate }: ClusterCardProps) {
   async function handleToggleExpanded() {
     setIsLoading(true);
     const newCollapsedState = isExpanded;
-    
-    const { error } = await supabase
-      .from('clusters')
-      .update({ is_collapsed: newCollapsedState })
-      .eq('id', cluster.id);
-
-    if (error) {
-      toast({ title: "Failed to update cluster", variant: "destructive" });
-    } else {
-      setIsExpanded(!newCollapsedState);
-    }
+    await toggleClusterCollapse(cluster.id, newCollapsedState);
+    setIsExpanded(!newCollapsedState);
     setIsLoading(false);
   }
 
   async function handleToggleThoughtCompletion(thoughtId: string, currentCompleted: boolean) {
     setIsLoading(true);
-    
-    const { error } = await supabase
-      .from('cluster_thoughts')
-      .update({ is_completed: !currentCompleted })
-      .eq('cluster_id', cluster.id)
-      .eq('thought_id', thoughtId);
+    await toggleThoughtCompletion(cluster.id, thoughtId, !currentCompleted);
+    onUpdate?.();
+    setIsLoading(false);
+  }
 
-    if (error) {
-      toast({ title: "Failed to update thought", variant: "destructive" });
-    } else {
-      onUpdate?.();
-    }
+  async function handleAddThought(thoughtId: string) {
+    setIsLoading(true);
+    await addThoughtToCluster(cluster.id, thoughtId);
+    onUpdate?.();
+    setIsLoading(false);
+  }
+
+  async function handleDeleteCluster() {
+    setIsLoading(true);
+    await deleteCluster(cluster.id);
+    onUpdate?.();
     setIsLoading(false);
   }
 
   return (
-    <Card className="p-4">
+    <Card 
+      className="p-4"
+      onDragOver={(e) => {
+        // Allow drop for future drag-and-drop from ThoughtCard
+        e.preventDefault();
+      }}
+      onDrop={(e) => {
+        const thoughtId = e.dataTransfer.getData('text/thought-id') || e.dataTransfer.getData('text/plain');
+        if (thoughtId) {
+          handleAddThought(thoughtId);
+        }
+      }}
+    >
       {/* Header */}
       <div 
         className="flex items-center justify-between cursor-pointer"
@@ -100,11 +109,49 @@ export function ClusterCard({ cluster, onUpdate }: ClusterCardProps) {
             </div>
           </div>
         </div>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" disabled={isLoading}>
+                Add Thought
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80">
+              <p className="text-caption text-muted-foreground mb-2">Add a thought to this cluster</p>
+              <div className="max-h-60 overflow-y-auto space-y-2">
+                {availableThoughts?.map((thought) => (
+                  <Button 
+                    key={thought.id} 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => handleAddThought(thought.id)}
+                  >
+                    {thought.content.split('\n')[0]}
+                  </Button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="h-8 w-8 text-destructive hover:text-destructive"
+            disabled={isLoading}
+            onClick={(e) => { e.stopPropagation(); handleDeleteCluster(); }}
+            title="Delete cluster"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Expandable Content */}
       {isExpanded && (
         <div className="mt-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
+          {/* Quick add list for available thoughts */}
+          <div className="flex items-center justify-between">
+            <div className="text-caption text-muted-foreground">Drag thoughts here or use Add Thought</div>
+          </div>
           {/* Active Tasks */}
           {activeThoughts.length > 0 && (
             <div>

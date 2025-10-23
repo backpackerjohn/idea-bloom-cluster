@@ -81,9 +81,45 @@ export function useChunkOperations() {
     },
   });
 
+  const addSubStep = useMutation({
+    mutationFn: async ({ chunkId, title, timeEstimate = '30 mins' }: { chunkId: string; title: string; timeEstimate?: string }) => {
+      const { count, error: countError } = await supabase
+        .from('sub_steps')
+        .select('id', { count: 'exact', head: true })
+        .eq('chunk_id', chunkId);
+
+      if (countError) throw countError;
+      const sort_order = (count ?? 0);
+
+      const { error } = await supabase
+        .from('sub_steps')
+        .insert({
+          chunk_id: chunkId,
+          title,
+          time_estimate: timeEstimate,
+          sort_order,
+          is_completed: false,
+        });
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['momentum-maps'] });
+      toast({ title: 'Added new sub-step' });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error adding sub-step',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   return {
     toggleSubStep: toggleSubStep.mutate,
     toggleLockChunk: toggleLockChunk.mutate,
     updateAcceptanceCriteria: updateAcceptanceCriteria.mutate,
+    addSubStep: addSubStep.mutate,
   };
 }

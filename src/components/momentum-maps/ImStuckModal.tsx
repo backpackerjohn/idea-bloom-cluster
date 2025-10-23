@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Lightbulb, Loader2 } from "lucide-react";
 import { Chunk } from "@/hooks/useMomentumMaps";
+import { useChunkOperations } from "@/hooks/useChunkOperations";
 
 interface ImStuckModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export function ImStuckModal({
 }: ImStuckModalProps) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const { addSubStep } = useChunkOperations();
 
   useEffect(() => {
     if (isOpen && chunk) {
@@ -70,6 +72,15 @@ export function ImStuckModal({
                     </span>
                   </div>
                   <p className="text-sm flex-1">{suggestion}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    disabled={!chunk}
+                    onClick={() => chunk && addSubStep({ chunkId: chunk.id, title: suggestion })}
+                  >
+                    Add as sub-step
+                  </Button>
                 </li>
               ))}
             </ul>
